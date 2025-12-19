@@ -124,6 +124,11 @@ if st.button("💾 Save changes to registry"):
         work = work.where(pd.notnull(work), None)
 
         records = work.to_dict(orient="records")
+        # Convert date objects to ISO strings for Supabase
+        for r in records:
+            for k, v in r.items():
+                if isinstance(v, date):
+                    r[k] = v.isoformat()
 
         to_update = []
         to_insert = []
