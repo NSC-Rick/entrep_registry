@@ -10,7 +10,13 @@ DATA_PATH = Path("data/initiatives.csv")
 # --- Load data ---
 @st.cache_data
 def load_data():
-    return pd.read_csv(DATA_PATH)
+    df = pd.read_csv(DATA_PATH)
+
+    # Convert date columns safely
+    for col in ["Last Check-In", "Next Check-In"]:
+        df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
+
+    return df
 
 df = load_data()
 
