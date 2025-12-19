@@ -1,25 +1,23 @@
+# pages/1_Initiatives.py
+
 import streamlit as st
 import pandas as pd
-from datetime import date
 from supabase import create_client
-import os
+from datetime import date
 
-# ------------------------------------------------------------
-# Page config
-# ------------------------------------------------------------
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Initiatives", layout="wide")
+
 st.title("NEK Entrepreneurial Initiative Registry")
-
-st.caption(
+st.markdown(
     "This registry supports shared visibility and stewardship of NEK-wide "
     "entrepreneurial initiatives. Changes are saved to the central registry."
 )
 
-# ------------------------------------------------------------
+# -------------------------
 # Supabase connection
-# ------------------------------------------------------------
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+# -------------------------
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY")
 
 if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     st.error("Supabase credentials not found. Check Streamlit Secrets.")
@@ -27,32 +25,17 @@ if not SUPABASE_URL or not SUPABASE_ANON_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-# ------------------------------------------------------------
-# Load data
-# ------------------------------------------------------------
-@st.cache_data
+# -------------------------
+# Data loading
+# -------------------------
+@st.cache_data(ttl=60)
 def load_initiatives():
-    response = supabase.table("initiatives").select("*").execute()
-    df = pd.DataFrame(response.data)
-
-    if df.empty:
-        return df
-
-    # Normalize date columns
-    for col in ["last_check_in", "next_check_in"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
-
-    return df
-
+    resp = supabase.table("initiatives").select("*").order("initiative_name").execute()
+    return pd.DataFrame(resp.data or [])
 
 df = load_initiatives()
 
-# ------------------------------------------------------------
-# Empty-state handling
-# ------------------------------------------------------------
 if df.empty:
-    st.info("No initiatives found yet. Add your first initiative below.")
     df = pd.DataFrame(
         columns=[
             "id",
@@ -63,82 +46,96 @@ if df.empty:
             "last_check_in",
             "next_check_in",
             "notes",
+            "updated_at",
         ]
     )
 
-# ------------------------------------------------------------
-# Filters
-# ------------------------------------------------------------
-status_filter = st.selectbox(
-    "Filter by status",
-    ["All", "Proposed", "Active", "Paused", "Completed"],
+# -------------------------
+# Status filter
+# -------------------------
+status_options = ["All"] + sorted(
+    [s for s in df["status"].dropna().unique()]
 )
 
-display_df = df.copy()
+selected_status = st.selectbox("Filter by status", status_options)
 
-if status_filter != "All" and not display_df.empty:
-    display_df = display_df[display_df["status"] == status_filter]
+if selected_status != "All":
+    df = df[df["status"] == selected_status]
 
-# ------------------------------------------------------------
+# -------------------------
 # Editable table
-# ------------------------------------------------------------
+# -------------------------
 st.subheader("Initiatives")
 
 edited_df = st.data_editor(
-    display_df,
+    df,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
+        "id": st.column_config.TextColumn(
+            "id",
+            disabled=True,
+            help="System-generated unique identifier",
+        ),
         "initiative_name": st.column_config.TextColumn(
-            "Initiative Name", required=True
+            "Initiative Name",
+            required=True,
         ),
         "region": st.column_config.TextColumn("Region"),
         "status": st.column_config.SelectboxColumn(
             "Status",
             options=["Proposed", "Active", "Paused", "Completed"],
-            required=True,
         ),
         "lead_steward": st.column_config.TextColumn("Lead Steward"),
         "last_check_in": st.column_config.DateColumn("Last Check-In"),
         "next_check_in": st.column_config.DateColumn("Next Check-In"),
         "notes": st.column_config.TextColumn("Notes"),
+        "updated_at": st.column_config.TextColumn(
+            "updated_at",
+            disabled=True,
+        ),
     },
-    disabled=["id"],  # internal key only
 )
 
-# ------------------------------------------------------------
-# Save changes
-# ------------------------------------------------------------
-st.divider()
-
+# -------------------------
+# Save logic
+# -------------------------
 if st.button("💾 Save changes to registry"):
     try:
-        records = edited_df.copy()
+        work = edited_df.copy()
 
-        # 1. Normalize column names (defensive)
-        records.columns = [
-            c.strip()
-             .lower()
-             .replace(" ", "_")
-             .replace("-", "_")
-            for c in records.columns
+        # Normalize column names defensively
+        work.columns = [
+            c.strip().lower().replace(" ", "_").replace("-", "_")
+            for c in work.columns
         ]
 
-        # 2. Drop rows that are completely empty
-        records = records.dropna(how="all")
+        # Drop completely empty rows (phantom editor rows)
+        work = work.dropna(how="all")
 
-        # 3. Convert NaN → None for Supabase
-        records = records.where(pd.notnull(records), None)
+        # Convert NaN -> None
+        work = work.where(pd.notnull(work), None)
 
-        payload = records.to_dict(orient="records")
+        records = work.to_dict(orient="records")
 
-        # 4. Remove empty IDs so Supabase can create them
-        for r in payload:
-            if not r.get("id"):
+        to_update = []
+        to_insert = []
+
+        for r in records:
+            raw_id = r.get("id")
+
+            # Treat empty strings as missing IDs
+            if raw_id and str(raw_id).strip():
+                to_update.append(r)
+            else:
                 r.pop("id", None)
+                to_insert.append(r)
 
-        # 5. Upsert
-        supabase.table("initiatives").upsert(payload).execute()
+        if to_update:
+            supabase.table("initiatives").upsert(to_update).execute()
+
+        if to_insert:
+            supabase.table("initiatives").insert(to_insert).execute()
 
         load_initiatives.clear()
         st.success("Registry updated successfully.")
@@ -147,10 +144,6 @@ if st.button("💾 Save changes to registry"):
         st.error("Failed to save changes.")
         st.exception(e)
 
-
-# ------------------------------------------------------------
-# Guidance
-# ------------------------------------------------------------
 st.caption(
     "Tip: Initiative names should be changed deliberately once in use. "
     "Persistent storage is provided by Supabase."
