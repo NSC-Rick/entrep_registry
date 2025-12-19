@@ -2,11 +2,11 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="NEK Registry Portal",
+    page_title="NEK Entrepreneurial Registry Portal",
     layout="wide",
 )
 
-st.title("NEK Registry Portal")
+st.title("NEK Registry")
 
 st.markdown(
     """
