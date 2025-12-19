@@ -1,55 +1,36 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from datetime import date
-
+from pathlib import Path
 
 st.title("NEK Entrepreneurial Initiative Registry")
 
+DATA_PATH = Path("data/initiatives.csv")
 
-st.write(
-    """
-    This registry tracks active, proposed, and completed initiatives
-    supporting the NEK entrepreneurial ecosystem.
-    """
-)
+# --- Load data ---
+@st.cache_data
+def load_data():
+    return pd.read_csv(DATA_PATH)
 
-# --- Sample data (MVP only) ---
-data = [
-    {
-        "Initiative Name": "NEK Entrepreneur Roundtables",
-        "Region": "NEK-wide",
-        "Status": "Active",
-        "Lead Steward": "Rick",
-        "Last Check-In": date(2025, 1, 10),
-        "Next Check-In": date(2025, 2, 10),
-        "Notes": "Monthly facilitator rotation working well."
-    },
-    {
-        "Initiative Name": "Downtown Startup Pop-Ups",
-        "Region": "St. Johnsbury",
-        "Status": "Proposed",
-        "Lead Steward": "TBD",
-        "Last Check-In": None,
-        "Next Check-In": None,
-        "Notes": ""
-    }
-]
+df = load_data()
 
-df = pd.DataFrame(data)
+# Initialize session state
+if "edited_df" not in st.session_state:
+    st.session_state.edited_df = df.copy()
 
-# --- Status filter ---
+# --- Filter ---
 status_filter = st.selectbox(
     "Filter by status",
     ["All", "Proposed", "Active", "Paused", "Completed"]
 )
 
+display_df = st.session_state.edited_df
 if status_filter != "All":
-    df = df[df["Status"] == status_filter]
+    display_df = display_df[display_df["Status"] == status_filter]
 
-st.subheader("Editable Initiative Table")
-
-edited_df = st.data_editor(
-    df,
+# --- Editable table ---
+edited = st.data_editor(
+    display_df,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
@@ -58,12 +39,19 @@ edited_df = st.data_editor(
         ),
         "Last Check-In": st.column_config.DateColumn(),
         "Next Check-In": st.column_config.DateColumn(),
-        "Notes": st.column_config.TextColumn()
-    },
-    #disabled=["Initiative Name"]
+        "Notes": st.column_config.TextColumn(),
+    }
 )
 
-# --- Save action (MVP placeholder) ---
+# --- Save button ---
 if st.button("Save changes"):
-    st.success("Changes captured (in-memory for now).")
-    st.caption("In the next phase, this will persist to a database.")
+    # Update session state
+    st.session_state.edited_df.update(edited)
+
+    # Write to CSV
+    st.session_state.edited_df.to_csv(DATA_PATH, index=False)
+
+    # Clear cache so reload picks up new data
+    load_data.clear()
+
+    st.success("Changes saved successfully.")
