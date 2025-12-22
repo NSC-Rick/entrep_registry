@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-import datetime as dt
+from datetime import timedelta
 
 st.set_page_config(page_title="Initiatives", layout="wide")
 
@@ -33,10 +33,10 @@ def load_initiatives():
     resp = supabase.table("initiatives").select("*").order("initiative_name").execute()
     df = pd.DataFrame(resp.data or [])
 
-    # Normalize date columns for Streamlit
+    # Normalize date columns to pandas Timestamp (timezone-naive)
     for col in ["last_check_in", "next_check_in"]:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
+            df[col] = pd.to_datetime(df[col], errors="coerce")
 
     return df
 
@@ -55,22 +55,21 @@ expected_cols = [
     "notes",
     "updated_at",
 ]
+
 if df_all.empty:
     df_all = pd.DataFrame(columns=expected_cols)
 else:
     for c in expected_cols:
         if c not in df_all.columns:
-            df_all[c] = None
+            df_all[c] = pd.NaT if "check_in" in c else None
 
 # -------------------------
-# Dashboard Metrics (calm, useful)
+# Dashboard Metrics
 # -------------------------
-today = dt.date.today()
+today = pd.Timestamp.today().normalize()
 due_window_days = 14
 
-# Define "active-ish" as things we still care to review
 activeish_statuses = ["Active", "Proposed"]
-
 activeish_df = df_all[df_all["status"].isin(activeish_statuses)]
 
 overdue_df = df_all[
@@ -83,12 +82,12 @@ due_soon_df = df_all[
     (df_all["status"].isin(activeish_statuses))
     & (df_all["next_check_in"].notna())
     & (df_all["next_check_in"] >= today)
-    & (df_all["next_check_in"] <= (today + dt.timedelta(days=due_window_days)))
+    & (df_all["next_check_in"] <= (today + timedelta(days=due_window_days)))
 ].copy()
 
 recent_df = df_all[
     (df_all["last_check_in"].notna())
-    & (df_all["last_check_in"] >= (today - dt.timedelta(days=30)))
+    & (df_all["last_check_in"] >= (today - timedelta(days=30)))
 ].copy()
 
 c1, c2, c3, c4 = st.columns(4)
@@ -106,7 +105,14 @@ st.subheader("Needs Attention")
 
 show_due_soon = st.checkbox("Show due-soon items (in addition to overdue)", value=True)
 
-cols_focus = ["initiative_name", "region", "lead_steward", "status", "next_check_in", "last_check_in"]
+cols_focus = [
+    "initiative_name",
+    "region",
+    "lead_steward",
+    "status",
+    "next_check_in",
+    "last_check_in",
+]
 
 if len(overdue_df) == 0 and (not show_due_soon or len(due_soon_df) == 0):
     st.info("Nothing urgent right now — no overdue items (and none due soon, if enabled).")
@@ -114,7 +120,8 @@ else:
     if len(overdue_df) > 0:
         st.markdown("**Overdue** (next check-in date has passed)")
         st.dataframe(
-            overdue_df[cols_focus].sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
+            overdue_df[cols_focus]
+            .sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
             use_container_width=True,
             hide_index=True,
         )
@@ -122,7 +129,8 @@ else:
     if show_due_soon and len(due_soon_df) > 0:
         st.markdown(f"**Due Soon** (next {due_window_days} days)")
         st.dataframe(
-            due_soon_df[cols_focus].sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
+            due_soon_df[cols_focus]
+            .sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
             use_container_width=True,
             hide_index=True,
         )
@@ -130,7 +138,7 @@ else:
 st.divider()
 
 # -------------------------
-# Filters (for the editable working table)
+# Filters (editable table)
 # -------------------------
 st.subheader("Initiatives (Editable)")
 
@@ -141,7 +149,6 @@ df = df_all.copy()
 if selected_status != "All":
     df = df[df["status"] == selected_status]
 
-# Use a stable copy for the editor
 base_df = df.reset_index(drop=True).copy()
 
 edited_df = st.data_editor(
@@ -176,25 +183,20 @@ edited_df = st.data_editor(
 )
 
 # -------------------------
-# Save logic (robust, Supabase-safe)
+# Save logic (Supabase-safe)
 # -------------------------
 if st.button("💾 Save changes to registry"):
     try:
         work = edited_df.copy()
 
-        # Normalize column names defensively
         work.columns = [
             c.strip().lower().replace(" ", "_").replace("-", "_")
             for c in work.columns
         ]
 
-        # Drop completely empty rows (phantom editor row)
         work = work.dropna(how="all")
-
-        # Convert NaN -> None (but keep date objects for now)
         work = work.where(pd.notnull(work), None)
 
-        # Keep payload strictly to known columns (avoid overwriting updated_at etc.)
         allowed_cols = {
             "id",
             "initiative_name",
@@ -209,21 +211,19 @@ if st.button("💾 Save changes to registry"):
 
         records = work.to_dict(orient="records")
 
-        # Convert date objects -> ISO strings, and NaT/NaN -> None
+        # Convert pandas Timestamps -> ISO date strings
         for r in records:
             for k, v in list(r.items()):
-                if pd.isna(v):
-                    r[k] = None
-                elif isinstance(v, dt.date):
-                    r[k] = v.isoformat()
+                if v is None:
+                    continue
+                if isinstance(v, pd.Timestamp):
+                    r[k] = v.date().isoformat()
 
         to_update = []
         to_insert = []
 
         for r in records:
             raw_id = r.get("id")
-
-            # Empty string IDs should be treated as missing IDs
             if raw_id and str(raw_id).strip():
                 to_update.append(r)
             else:
