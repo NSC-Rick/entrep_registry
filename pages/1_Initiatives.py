@@ -63,79 +63,7 @@ else:
         if c not in df_all.columns:
             df_all[c] = pd.NaT if "check_in" in c else None
 
-# -------------------------
-# Dashboard Metrics
-# -------------------------
-today = pd.Timestamp.today().normalize()
-due_window_days = 14
 
-activeish_statuses = ["Active", "Proposed"]
-activeish_df = df_all[df_all["status"].isin(activeish_statuses)]
-
-overdue_df = df_all[
-    (df_all["status"].isin(activeish_statuses))
-    & (df_all["next_check_in"].notna())
-    & (df_all["next_check_in"] < today)
-].copy()
-
-due_soon_df = df_all[
-    (df_all["status"].isin(activeish_statuses))
-    & (df_all["next_check_in"].notna())
-    & (df_all["next_check_in"] >= today)
-    & (df_all["next_check_in"] <= (today + timedelta(days=due_window_days)))
-].copy()
-
-recent_df = df_all[
-    (df_all["last_check_in"].notna())
-    & (df_all["last_check_in"] >= (today - timedelta(days=30)))
-].copy()
-
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Active / Proposed", int(len(activeish_df)))
-c2.metric("Overdue", int(len(overdue_df)))
-c3.metric(f"Due Soon ({due_window_days}d)", int(len(due_soon_df)))
-c4.metric("Updated (30d)", int(len(recent_df)))
-
-st.divider()
-
-# -------------------------
-# Needs Attention Panel
-# -------------------------
-st.subheader("Needs Attention")
-
-show_due_soon = st.checkbox("Show due-soon items (in addition to overdue)", value=True)
-
-cols_focus = [
-    "initiative_name",
-    "region",
-    "lead_steward",
-    "status",
-    "next_check_in",
-    "last_check_in",
-]
-
-if len(overdue_df) == 0 and (not show_due_soon or len(due_soon_df) == 0):
-    st.info("Nothing urgent right now — no overdue items (and none due soon, if enabled).")
-else:
-    if len(overdue_df) > 0:
-        st.markdown("**Overdue** (next check-in date has passed)")
-        st.dataframe(
-            overdue_df[cols_focus]
-            .sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    if show_due_soon and len(due_soon_df) > 0:
-        st.markdown(f"**Due Soon** (next {due_window_days} days)")
-        st.dataframe(
-            due_soon_df[cols_focus]
-            .sort_values(by=["next_check_in", "initiative_name"], na_position="last"),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-st.divider()
 
 # -------------------------
 # Filters (editable table)
