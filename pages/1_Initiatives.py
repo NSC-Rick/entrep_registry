@@ -33,7 +33,7 @@ def load_initiatives():
     resp = supabase.table("initiatives").select("*").order("initiative_name").execute()
     df = pd.DataFrame(resp.data or [])
 
-    # Normalize date columns to pandas Timestamp (timezone-naive)
+    # Normalize date columns
     for col in ["last_check_in", "next_check_in"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -43,7 +43,7 @@ def load_initiatives():
 
 df_all = load_initiatives()
 
-# Ensure expected columns exist even if empty
+# Ensure expected columns exist
 expected_cols = [
     "id",
     "initiative_name",
@@ -62,8 +62,6 @@ else:
     for c in expected_cols:
         if c not in df_all.columns:
             df_all[c] = pd.NaT if "check_in" in c else None
-
-
 
 # -------------------------
 # Filters (editable table)
@@ -84,11 +82,9 @@ edited_df = st.data_editor(
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        "id": st.column_config.TextColumn(
-            "id",
-            disabled=True,
-            help="System-generated unique identifier",
-        ),
+        # 🔒 Hide system ID completely
+        "id": None,
+
         "initiative_name": st.column_config.TextColumn(
             "Initiative Name",
             required=True,
@@ -139,11 +135,9 @@ if st.button("💾 Save changes to registry"):
 
         records = work.to_dict(orient="records")
 
-        # Convert pandas Timestamps -> ISO date strings
+        # Convert pandas timestamps to ISO dates
         for r in records:
             for k, v in list(r.items()):
-                if v is None:
-                    continue
                 if isinstance(v, pd.Timestamp):
                     r[k] = v.date().isoformat()
 
@@ -151,8 +145,7 @@ if st.button("💾 Save changes to registry"):
         to_insert = []
 
         for r in records:
-            raw_id = r.get("id")
-            if raw_id and str(raw_id).strip():
+            if r.get("id"):
                 to_update.append(r)
             else:
                 r.pop("id", None)
