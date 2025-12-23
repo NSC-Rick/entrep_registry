@@ -77,14 +77,20 @@ if selected_status != "All":
 
 base_df = df.reset_index(drop=True).copy()
 
+# -------------------------
+# Hide system ID from UI
+# -------------------------
+row_ids = base_df["id"] if "id" in base_df.columns else None
+base_df = base_df.drop(columns=["id"], errors="ignore")
+
+# -------------------------
+# Editable table
+# -------------------------
 edited_df = st.data_editor(
     base_df,
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        # 🔒 Hide system ID completely
-        "id": None,
-
         "initiative_name": st.column_config.TextColumn(
             "Initiative Name",
             required=True,
@@ -105,6 +111,10 @@ edited_df = st.data_editor(
         ),
     },
 )
+
+# Reattach hidden IDs for save logic
+if row_ids is not None:
+    edited_df.insert(0, "id", row_ids)
 
 # -------------------------
 # Save logic (Supabase-safe)
